@@ -232,7 +232,7 @@ async def report_handler(message: Message):
     )
 
 
-@dp.command(Command('stats'))
+@dp.message(Command('stats'))
 async def stats_command(message: Message):
     user_count = await db.get_user_count()
     premium_count = await db.get_premium_user_count()
