@@ -1,10 +1,9 @@
-from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase, AsyncIOMotorCollection
+from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ReturnDocument
 
 
-# на будущее
-class MongoChatState:
-    def __init__(self, mongo_uri, db_name):
+class Database:
+    def __init__(self, mongo_uri: str, db_name: str):
         self.client = AsyncIOMotorClient(mongo_uri)
         self.db = self.client[db_name]
         
@@ -51,10 +50,17 @@ class MongoChatState:
             upsert=True
         )
 
-
     async def get_user_language(self, user_id):
         doc = await self.user_settings.find_one({"user_id": user_id})
-        return doc.get("language") if doc else None
+        if doc:
+            return doc.get("language", "en")
+        return None
+
+    async def get_active_pairs(self, user_id: int) -> list:
+        return await self.active_pairs.find({"user_id": user_id}).to_list(None)
+
+    async def get_waiting_users(self) -> list:
+        return await self.waiting_queue.find().to_list(None)
 
 
     async def add_active_pair(self, user1, user2):
@@ -132,5 +138,4 @@ class MongoChatState:
     async def get_premium(self, user_id):
         doc = await self.premium_users.find_one({"user_id": user_id})
         return doc.get("expires") if doc else None
-
 

@@ -1,39 +1,40 @@
-from loguru import logger
 import asyncio
-from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message
-from aiogram.filters import Command, CommandStart
-from aiogram.fsm.state import StatesGroup, State
-from aiogram.fsm.context import FSMContext
-from aiogram.filters.state import StateFilter
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-from aiogram.exceptions import (
-    TelegramForbiddenError, 
-    TelegramNotFound,
-    TelegramRetryAfter,
-    TelegramBadRequest
-)
 import json
 import os
 
-
+from aiogram import Bot, Dispatcher, F
+from aiogram.exceptions import (
+    TelegramForbiddenError,
+    TelegramNotFound
+)
+from aiogram.filters import Command, CommandStart
+from aiogram.types import KeyboardButton
+from aiogram.types import Message
+from aiogram.utils.keyboard import ReplyKeyboardBuilder
 from dotenv import load_dotenv
+from loguru import logger
+
+from database import Database
+
+
 load_dotenv()
 
 BOT_TOKEN: str = os.getenv('BOT_TOKEN')
 MAX_WARNINGS: int = int(os.getenv('MAX_WARNINGS'))
 CLEANUP_INTERVAL: int = int(os.getenv('CLEANUP_INTERVAL'))
-DB_URI: str | None = os.getenv('DB_URI')  # не используется
+DB_URI: str = os.getenv('DB_URI')
 OWNER_ID: int = int(os.getenv('OWNER_ID'))
+DB_NAME: str =os.getenv('DB_NAME')
 
 
-# загрузка translations из lang.json
 with open('lang.json') as f:
     translations = json.load(f)
 
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+
+db = Database(DB_URI, DB_NAME)
 
 
 class ChatState:
@@ -51,7 +52,7 @@ state = ChatState()
 
 
 async def get_translation(user_id: int) -> dict:
-    lang = state.user_languages.get(user_id, 'en')
+    lang = await db.get_user_language(user_id) or 'en'
     return translations.get(lang, translations['en'])
 
 
@@ -72,35 +73,28 @@ async def send_message(user_id: int, key: str, **kwargs):
 
 
 async def connect_users(user1_id: int, user2_id: int):
-    state.active_pairs[user1_id] = user2_id
-    state.active_pairs[user2_id] = user1_id
+    await db.add_active_pair(user1_id, user2_id)
     await send_message(user1_id, 'partnerFind')
     await send_message(user2_id, 'partnerFind')
 
 
 async def disconnect_users(user1_id: int, user2_id: int):
-    if user1_id in state.active_pairs:
-        del state.active_pairs[user1_id]
-    if user2_id in state.active_pairs:
-        del state.active_pairs[user2_id]
-    
+    await db.remove_active_pair(user1_id)
+    await db.remove_active_pair(user2_id)
     await send_message(user1_id, 'skipDialogue')
     await send_message(user2_id, 'partnerSkipDialogue')
 
 
 async def cleanup_user(user_id: int):
-    if user_id in state.active_pairs:
-        partner_id = state.active_pairs[user_id]
-        del state.active_pairs[user_id]
-        if partner_id in state.active_pairs:
-            del state.active_pairs[partner_id]
+    partner_id = await db.remove_active_pair(user_id)
+    if partner_id:
         await send_message(partner_id, 'partnerSkipDialogue')
-    
-    if user_id in state.waiting_queue:
-        state.waiting_queue.remove(user_id)
-    
-    if user_id in state.reporting:
-        del state.reporting[user_id]
+
+    await db.remove_from_waiting(user_id)
+
+    global reporting
+    if user_id in reporting:
+        del reporting[user_id]
 
 
 @dp.message(CommandStart())
@@ -112,7 +106,7 @@ async def start_handler(message: Message):
         return
     
     lang = message.from_user.language_code or 'en'
-    state.user_languages[user_id] = lang if lang in translations else 'en'
+    await db.set_user_language(user_id, lang)
     await send_message(user_id, 'hello')
 
 
@@ -124,46 +118,46 @@ async def help_handler(message: Message):
 @dp.message(Command('next'))
 async def next_handler(message: Message):
     user_id = message.from_user.id
-    
-    if user_id in state.banned_users:
+
+    if await db.is_banned(user_id):
         await send_message(user_id, 'banMessage')
         return
-    
-    if user_id in state.active_pairs:
+
+    if await db.active_pairs.find_one({"user_id": user_id}):
         await send_message(user_id, 'inDialogueWarning')
         return
-    
-    if user_id in state.waiting_queue:
-        await send_message(user_id, 'queue')
-        return
-        
-    if state.warnings.get(user_id, 0) >= MAX_WARNINGS:
-        state.banned_users.add(user_id)
+
+    warnings = await db.get_warnings(user_id)
+    if warnings >= MAX_WARNINGS:
+        await db.ban_user(user_id)
         await cleanup_user(user_id)
         await send_message(user_id, 'banMessage')
         return
-    
-    if state.waiting_queue:
-        partner_id = state.waiting_queue.pop()
+
+    waiting_user = await db.waiting_queue.find_one_and_delete({})
+    if waiting_user:
+        partner_id = waiting_user['user_id']
+        await db.add_active_pair(user_id, partner_id)
         await connect_users(user_id, partner_id)
     else:
-        state.waiting_queue.add(user_id)
+        await db.add_to_waiting(user_id)
         await send_message(user_id, 'partnerFinding')
 
 
 @dp.message(Command('stop'))
 async def stop_handler(message: Message):
     user_id = message.from_user.id
-    
-    if user_id in state.banned_users:
+
+    if await db.is_banned(user_id):
         await send_message(user_id, 'banMessage')
         return
-    
-    if user_id in state.active_pairs:
-        partner_id = state.active_pairs[user_id]
+
+    active_pair = await db.active_pairs.find_one({"user_id": user_id})
+    if active_pair:
+        partner_id = active_pair["pair_id"]
         await disconnect_users(user_id, partner_id)
-    elif user_id in state.waiting_queue:
-        state.waiting_queue.remove(user_id)
+    else:
+        await db.remove_from_waiting(user_id)
 
 
 @dp.message(Command('report'))
@@ -181,15 +175,15 @@ async def report_handler(message: Message):
     state.reporting[user_id] = partner_id
     
     translation = await get_translation(user_id)
-    keyboard = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    keyboard = ReplyKeyboardBuilder()
     
     for reason in translation.get('reportReasons', []):
-        keyboard.add(KeyboardButton(reason))
+        keyboard.add(KeyboardButton(text=reason))
     
     await bot.send_message(
         user_id,
         translation['reportOptions'],
-        reply_markup=keyboard
+        reply_markup=keyboard.as_markup(resize_keyboard=True, one_time_keyboard=True)
     )
 
 
@@ -197,32 +191,33 @@ async def report_handler(message: Message):
 async def text_handler(message: Message):
     user_id = message.from_user.id
     text = message.text
-    
-    if user_id in state.banned_users:
+
+    if await db.is_banned(user_id):
         return
-    
-    if user_id in state.reporting:
-        partner_id = state.reporting[user_id]
-        del state.reporting[user_id]
-        
-        state.warnings[partner_id] = state.warnings.get(partner_id, 0) + 1
-        
-        if state.warnings[partner_id] >= MAX_WARNINGS:
-            state.banned_users.add(partner_id)
+
+    global reporting
+    if user_id in reporting:
+        partner_id = reporting[user_id]
+        del reporting[user_id]
+
+        await db.add_warning(partner_id)
+        warnings = await db.get_warnings(partner_id)
+
+        if warnings >= MAX_WARNINGS:
+            await db.ban_user(partner_id)
             await cleanup_user(partner_id)
             await send_message(partner_id, 'banMessage')
-            # TODO сделать баны через Middleware
-            # (шутка которая обрабатывает апдейты до хандлеров и возможно отменяет обработку апдейта)
-        
+
         await disconnect_users(user_id, partner_id)
         await send_message(user_id, 'reportSuccess')
         return
-    
+
     if text.startswith('/'):
         return
-    
-    if user_id in state.active_pairs:
-        partner_id = state.active_pairs[user_id]
+
+    active_pair = await db.active_pairs.find_one({"user_id": user_id})
+    if active_pair:
+        partner_id = active_pair["pair_id"]
         try:
             await bot.send_message(partner_id, text)
         except Exception as e:
@@ -233,6 +228,7 @@ async def text_handler(message: Message):
 
 
 async def main():
+    await db.init_indexes()
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
