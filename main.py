@@ -269,7 +269,8 @@ async def text_handler(message: Message, state: FSMContext):
 async def main():
     await db.init_indexes()
     await bot.delete_webhook(drop_pending_updates=True)
-    logger.info('Bot started')
+    me = await bot.get_me()
+    logger.info(f'Bot started: @{me.username} (ID {me.id})')
     await dp.start_polling(bot)
 
 
