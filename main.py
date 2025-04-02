@@ -141,6 +141,8 @@ async def message_middleware(
     if await db.is_banned(message.from_user.id):
         await send_message(message.from_user.id, 'banMessage')
         return None
+    if not await db.is_existing_user(message.from_user.id):
+        await db.set_user_language(message.from_user.id, message.from_user.language_code or 'en')
     return await handler(message, data)
 
 

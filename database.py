@@ -138,6 +138,10 @@ class Database:
         return doc["count"]
 
 
+    async def is_existing_user(self, user_id):
+        return await self.user_settings.find_one({"user_id": user_id}) is not None
+
+
     async def get_user_count(self):
         return await self.user_settings.count_documents({})
 
