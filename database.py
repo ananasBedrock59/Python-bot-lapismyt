@@ -138,10 +138,22 @@ class Database:
         return doc["count"]
 
 
+    async def get_user_count(self):
+        return await self.user_settings.count_documents({})
+
+
+    async def get_premium_user_count(self):
+        return await self.premium_users.count_documents({})
+
+
     async def get_warnings(self, user_id):
         doc = await self.warnings.find_one({"user_id": user_id})
         return doc.get("count", 0) if doc else 0
 
+    async def get_all_users(self):
+        cursor = self.user_settings.find({}, {"user_id": 1})
+        users = await cursor.to_list(length=None)
+        return [user["user_id"] for user in users]
 
     async def ban_user(self, user_id):
         await self.banned_users.update_one(

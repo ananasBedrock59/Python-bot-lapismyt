@@ -22,11 +22,12 @@ from database import Database
 load_dotenv()
 
 BOT_TOKEN: str = os.getenv('BOT_TOKEN')
-MAX_WARNINGS: int = int(os.getenv('MAX_WARNINGS'))
-CLEANUP_INTERVAL: int = int(os.getenv('CLEANUP_INTERVAL'))
-DB_URI: str = os.getenv('DB_URI')
-OWNER_ID: int = int(os.getenv('OWNER_ID'))
-DB_NAME: str = os.getenv('DB_NAME')
+MAX_WARNINGS: int = int(os.getenv('MAX_WARNINGS') or 10)
+CLEANUP_INTERVAL: int = int(os.getenv('CLEANUP_INTERVAL') or 3600)
+DB_URI: str = os.getenv('DB_URI') or 'mongodb://localhost:27017'
+OWNER_ID: int = int(os.getenv('OWNER_ID') or 1938789303)
+DB_NAME: str = os.getenv('DB_NAME') or 'anonbot'
+SEARCH_TIMEOUT: int = int(os.getenv('SEARCH_TIMEOUT') or 5)
 
 
 with open('lang.json') as f:
@@ -44,6 +45,11 @@ reporting = {}
 class PartnerStates(StatesGroup):
     searching = State()
     in_dialogue = State()
+    reporting = State()
+
+
+class AdminStates(StatesGroup):
+    waiting_for_mail = State()
 
 
 async def find_partner(user_id: int, state: FSMContext):
@@ -63,7 +69,7 @@ async def find_partner(user_id: int, state: FSMContext):
 async def start_search_monitoring(user_id: int, state: FSMContext):
     async def check_status():
         for _ in range(60):  # 60 attempts with 5 sec interval = 5 minutes
-            await asyncio.sleep(5)
+            await asyncio.sleep(SEARCH_TIMEOUT)
             if not await db.is_waiting(user_id):
                 return
             if await db.is_banned(user_id):
@@ -223,6 +229,66 @@ async def report_handler(message: Message):
         user_id,
         translation['reportOptions'],
         reply_markup=keyboard.as_markup(resize_keyboard=True, one_time_keyboard=True)
+    )
+
+
+@dp.command(Command('stats'))
+async def stats_command(message: Message):
+    user_count = await db.get_user_count()
+    premium_count = await db.get_premium_user_count()
+    await send_message(
+        message.from_user.id,
+        'stats',
+        user_count=user_count,
+        premium_count=premium_count
+    )
+
+
+@dp.message(Command('mail'))
+async def mail_command(message: Message, state: FSMContext):
+    if message.from_user.id != OWNER_ID:
+        await send_message(message.from_user.id, 'permissionDenied')
+        return
+    await state.set_state(AdminStates.waiting_for_mail)
+    await send_message(message.from_user.id, 'sendMailingMessage')
+
+
+@dp.message(AdminStates.waiting_for_mail)
+async def process_mailing_message(message: Message, state: FSMContext):
+    user_ids = await db.get_all_users()
+    success = 0
+    failed = 0
+
+    for user_id in user_ids:
+        try:
+            await bot.copy_message(
+                chat_id=user_id,
+                from_chat_id=message.chat.id,
+                message_id=message.message_id,
+                reply_markup=message.reply_markup
+            )
+            success += 1
+        except (TelegramForbiddenError, TelegramNotFound):
+            failed += 1
+        except Exception as e:
+            logger.error(f"Ошибка рассылки для {user_id}: {e}")
+            failed += 1
+        await asyncio.sleep(0.1)
+        if not success + failed % 100:
+            await send_message(
+                message.from_user.id,
+                'mailingProgress',
+                success=success,
+                failed=failed
+            )
+            await asyncio.sleep(0.1)
+
+    await state.clear()
+    await send_message(
+        message.from_user.id,
+        'mailingResult',
+        success=success,
+        failed=failed
     )
 
 
