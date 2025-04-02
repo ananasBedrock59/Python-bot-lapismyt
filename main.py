@@ -25,7 +25,7 @@ BOT_TOKEN: str = os.getenv('BOT_TOKEN')
 MAX_WARNINGS: int = int(os.getenv('MAX_WARNINGS') or 10)
 CLEANUP_INTERVAL: int = int(os.getenv('CLEANUP_INTERVAL') or 3600)
 DB_URI: str = os.getenv('DB_URI') or 'mongodb://localhost:27017'
-OWNER_ID: int = int(os.getenv('OWNER_ID') or 1938789303)
+OWNER_IDS: list[int] = list(map(int, os.getenv('OWNER_IDS', '').split(','))) if os.getenv('OWNER_IDS') else []
 DB_NAME: str = os.getenv('DB_NAME') or 'anonbot'
 SEARCH_TIMEOUT: int = int(os.getenv('SEARCH_TIMEOUT') or 5)
 
@@ -146,7 +146,6 @@ async def message_middleware(
     return await handler(message, data)
 
 
-
 @dp.message(CommandStart())
 async def start_handler(message: Message):
     user_id = message.from_user.id
@@ -248,7 +247,7 @@ async def stats_command(message: Message):
 
 @dp.message(Command('mail'))
 async def mail_command(message: Message, state: FSMContext):
-    if message.from_user.id != OWNER_ID:
+    if message.from_user.id not in OWNER_IDS:
         await send_message(message.from_user.id, 'permissionDenied')
         return
     await state.set_state(AdminStates.waiting_for_mail)
