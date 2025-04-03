@@ -25,7 +25,8 @@
         "sendMailingMessage": "Please send the message to broadcast.",
         "mailingProgress": "⌛ Mailing in progress...\nSuccess: {success}\nFailed: {failed}",
         "mailingResult": "✅ Mailing completed!\nSuccess: {success}\nFailed: {failed}",
-        "stats": "📊 Statistics\nUsers: {user_count}\nPremium users: {premium_count}"
+        "stats": "📊 Statistics\nUsers: {user_count}\nPremium users: {premium_count}",
+        "premiumExpired": "😢 Your premium subscription has expired recently."
     },
     "ru": {
         "hello": "👋 Привет! Я твой анонимный чат-бот.\nДавай находить новых друзей! Используй /next\n/stop - завершить диалог\n/help - помощь\n/report - пожаловаться на пользователя",

@@ -1,222 +1,239 @@
-from datetime import datetime, timedelta
 import random
-from typing import Optional
+from datetime import datetime, timedelta
+from typing import Optional, Literal
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection, AsyncIOMotorDatabase
-from pymongo import ReturnDocument, ASCENDING
+from pymongo import ASCENDING
 
 
 class Database:
     def __init__(self, mongo_uri: str, db_name: str):
         self.client = AsyncIOMotorClient(mongo_uri)
         self.db: AsyncIOMotorDatabase = self.client[db_name]
-        
-        self.user_settings: AsyncIOMotorCollection = self.db.user_settings
+
+        self.users: AsyncIOMotorCollection = self.db.users
         self.active_pairs: AsyncIOMotorCollection = self.db.active_pairs
         self.waiting_queue: AsyncIOMotorCollection = self.db.waiting_queue
-        self.warnings: AsyncIOMotorCollection = self.db.warnings
-        self.banned_users: AsyncIOMotorCollection = self.db.banned_users
         self.reports: AsyncIOMotorCollection = self.db.reports
-        self.invite_links: AsyncIOMotorCollection = self.db.invite_links
-        self.premium_users: AsyncIOMotorCollection = self.db.premium_users
 
 
     async def init_indexes(self):
-        await self.waiting_queue.create_index(
-            [("timestamp", ASCENDING)],
-            expireAfterSeconds=300
-        )
-
-        if "user_id" not in await self.user_settings.index_information():
-            await self.user_settings.create_index("user_id", unique=True)
-
-        if "user_id" not in await self.active_pairs.index_information():
-            await self.active_pairs.create_index("user_id")
-
-        if "user_id" not in await self.waiting_queue.index_information():
-            await self.waiting_queue.create_index("user_id", unique=True)
-
-        if "user_id" not in await self.warnings.index_information():
-            await self.warnings.create_index("user_id", unique=True)
-
-        if "user_id" not in await self.banned_users.index_information():
-            await self.banned_users.create_index("user_id", unique=True)
-
-        if "report_id" not in await self.reports.index_information():
-            await self.reports.create_index("report_id", unique=True)
-
-        if "link" not in await self.invite_links.index_information():
-            await self.invite_links.create_index("link", unique=True)
-
-        if "user_id" not in await self.premium_users.index_information():
-            await self.premium_users.create_index("user_id", unique=True)
+        if not 'user_id' in await self.users.index_information():
+            await self.users.create_index("user_id", unique=True)
+        if not 'timestamp' in await self.waiting_queue.index_information():
+            await self.waiting_queue.create_index(
+                [("timestamp", ASCENDING)],
+                expireAfterSeconds=300
+            )
+        if not 'last_activity' in await self.active_pairs.index_information():
+            await self.active_pairs.create_index(
+                [("last_activity", ASCENDING)],
+                expireAfterSeconds=86400
+            )
+        if not 'user1_id' in await self.active_pairs.index_information():
+            await self.active_pairs.create_index("user1_id")
+        if not 'user2_id' in await self.active_pairs.index_information():
+            await self.active_pairs.create_index("user2_id")
+        if not 'pair_id' in await self.active_pairs.index_information():
+            await self.active_pairs.create_index("pair_id", unique=True)
 
 
-    async def set_user_language(self, user_id, lang):
-        await self.user_settings.update_one(
+    async def get_user(self, user_id: int) -> Optional[dict]:
+        return await self.users.find_one({"user_id": user_id})
+
+
+    async def update_user(self, user_id: int, update_data: dict):
+        await self.users.update_one(
             {"user_id": user_id},
-            {"$set": {"language": lang}},
+            {"$set": update_data},
             upsert=True
         )
 
-    async def get_user_language(self, user_id):
-        doc = await self.user_settings.find_one({"user_id": user_id})
-        if doc:
-            return doc.get("language", "en")
+
+    async def set_user_language(self, user_id: int, lang: str):
+        await self.update_user(user_id, {"language": lang})
+
+
+    async def get_user_language(self, user_id: int):
+        user = await self.get_user(user_id)
+        if user:
+            return user.get("language", "en")
         return None
 
-    async def get_active_pairs(self, user_id: int) -> list:
-        return await self.active_pairs.find({"user_id": user_id}).to_list(None)
+
+    async def get_pair(self, user_id: int) -> Optional[dict]:
+        return await self.active_pairs.find_one({
+            "$or": [
+                {"user1_id": user_id},
+                {"user2_id": user_id}
+            ],
+            "status": "active"
+        })
+
 
     async def get_waiting_users(self) -> list:
         return await self.waiting_queue.find().to_list(None)
 
+
     async def is_waiting(self, user_id: int) -> bool:
         return await self.waiting_queue.find_one({"user_id": user_id}) is not None
 
-    async def create_active_pair(self, user1: int, user2: int):
-        pair_id = random.randint(10000000, 99999999)
-        await self.active_pairs.insert_many([
-            {"user_id": user1, "pair_id": pair_id, "timestamp": datetime.now()},
-            {"user_id": user2, "pair_id": pair_id, "timestamp": datetime.now()}
-        ])
+    async def create_pair(self, user1: int, user2: int) -> int:
+        pair_id = random.randint(1_000_000, 9_999_999)
+        now = datetime.now().timestamp()
 
-        await self.waiting_queue.delete_many({
-            "$or": [{"user_id": user1}, {"user_id": user2}]
+        await self.active_pairs.insert_one({
+            "user1_id": min(user1, user2),
+            "user2_id": max(user1, user2),
+            "pair_id": pair_id,
+            "created_at": now,
+            "last_activity": now,
+            "status": "active"
         })
+        return pair_id
 
 
-    async def remove_active_pair(self, user_id):
-        usr = await self.active_pairs.find_one_and_delete(
-            {"user_id": user_id},
-            projection={"pair_id": 1}
+    async def delete_pair(self, pair_id: int):
+        await self.active_pairs.delete_one({"pair_id": pair_id})
+
+    async def update_pair_activity(self, user_id: int):
+        pair = await self.get_pair(user_id)
+        if pair:
+            await self.active_pairs.update_one(
+                {"pair_id": pair["pair_id"]},
+                {"$set": {"last_activity": datetime.now().timestamp()}}
+            )
+
+    async def end_pair(self, pair_id: int, status: str = "ended"):
+        await self.active_pairs.update_one(
+            {"pair_id": pair_id},
+            {"$set": {"status": status}}
         )
-        if usr:
-            partner = await self.active_pairs.delete_one({"pair_id": usr["pair_id"]})
-            return partner
-        return None
 
-    async def remove_active_pair_bulk(self, *user_ids):
-        partners = await self.active_pairs.delete_many({"user_id": {"$in": user_ids}})
-        return partners
 
-    async def add_to_waiting(self, user_id: int):
+    async def add_user(self, user_id: int, lang: str):
+        await self.users.update_one(
+            {"user_id": user_id},
+            {"$set": {
+                "user_id": user_id,
+                "language": lang,
+                "warnings": 0,
+                "premium_expires": None,
+                "banned": False,
+                "created_at": datetime.now().timestamp(),
+                "last_active": datetime.now().timestamp()
+            }},
+            upsert=True
+        )
+
+
+    async def add_to_waiting(self, user_id: int, lang: str):
         await self.waiting_queue.update_one(
             {"user_id": user_id},
             {"$set": {
                 "user_id": user_id,
                 "timestamp": datetime.now(),
-                "lang": await self.get_user_language(user_id)
+                "lang": lang
             }},
             upsert=True
         )
 
-    async def pop_waiting_user(self) -> Optional[dict]:
-        user = await self.waiting_queue.find_one_and_delete(
-            {},
-            sort=[("timestamp", ASCENDING)]
-        )
-        return user
 
-    async def cleanup_inactive_pairs(self):
-        cutoff = datetime.now() - timedelta(hours=24)
-        pairs = await self.active_pairs.find({
-            "timestamp": {"$lt": cutoff}
-        }).to_list(None)
-
-        for pair in pairs:
-            await self.remove_active_pair(pair["user_id"])
-
-
-    async def add_warning(self, user_id):
-        doc = await self.warnings.find_one_and_update(
+    async def update_user_activity(self, user_id: int):
+        await self.users.update_one(
             {"user_id": user_id},
-            {"$inc": {"count": 1}},
-            upsert=True,
-            return_document=ReturnDocument.AFTER
+            {"$set": {"last_active": datetime.now()}}
         )
-        return doc["count"]
+        return await self.check_premium(user_id)
+
+    async def cleanup_old_pairs(self):
+        cutoff = datetime.now() - timedelta(hours=24)
+        await self.active_pairs.delete_many({
+            "last_activity": {"$lt": cutoff}
+        })
+
+    async def add_warning(self, user_id: int):
+        result = await self.users.update_one(
+            {"user_id": user_id},
+            {"$inc": {"warnings": 1}},
+            upsert=True
+        )
+        user = await self.get_user(user_id)
+        return user.get("warnings", 0)
 
 
     async def is_existing_user(self, user_id):
-        return await self.user_settings.find_one({"user_id": user_id}) is not None
+        return await self.get_user(user_id) is not None
 
 
     async def get_user_count(self):
-        return await self.user_settings.count_documents({})
+        return await self.users.count_documents({})
 
 
     async def get_premium_user_count(self):
-        return await self.premium_users.count_documents({})
+        return await self.users.count_documents({"premium_expires": {"$gt": datetime.now().timestamp()}})
 
-
-    async def get_warnings(self, user_id):
-        doc = await self.warnings.find_one({"user_id": user_id})
-        return doc.get("count", 0) if doc else 0
+    async def get_warnings(self, user_id: int):
+        user = await self.get_user(user_id)
+        return user.get("warnings", 0) if user else 0
 
     async def get_all_users(self):
-        cursor = self.user_settings.find({}, {"user_id": 1})
+        cursor = self.users.find({}, {"user_id": 1})
         users = await cursor.to_list(length=None)
         return [user["user_id"] for user in users]
 
-    async def ban_user(self, user_id):
-        await self.banned_users.update_one(
-            {"user_id": user_id},
-            {"$setOnInsert": {"user_id": user_id}},
-            upsert=True
-        )
+    async def ban_user(self, user_id: int):
+        await self.update_user(user_id, {'banned': True})
 
-    async def is_in_dialogue(self, user_id) -> bool:
-        doc = await self.active_pairs.find_one({"user_id": user_id})
-        return doc is not None
+    async def is_in_dialogue(self, user_id: int) -> bool:
+        return await self.get_pair(user_id) is not None
 
 
-    async def get_partner_id(self, user_id: int) -> int | None:
-        user_doc = await self.active_pairs.find_one(
-            {"user_id": user_id},
-            projection={"pair_id": 1}
-        )
-        if not user_doc:
+    async def get_partner_id(self, user_id: int) -> Optional[int]:
+        pair = await self.get_pair(user_id)
+        if not pair:
             return None
-
-        pair_id = user_doc.get("pair_id")
-        if not pair_id:
-            return None
-
-        pair_user_doc = await self.active_pairs.find_one(
-            {
-                "pair_id": pair_id,
-                "user_id": {"$ne": user_id}
-            },
-            projection={"user_id": 1}
-        )
-        return pair_user_doc.get("user_id") if pair_user_doc else None
+        return pair["user2_id"] if pair["user1_id"] == user_id else pair["user1_id"]
 
 
 
     async def unban_user(self, user_id):
-        result = await self.banned_users.delete_one({"user_id": user_id})
-        return result.deleted_count > 0
+        await self.update_user(user_id, {"banned": False})
+
+    async def is_banned(self, user_id: int) -> bool:
+        user = await self.get_user(user_id)
+        return user.get("banned", False) if user else False
 
 
-    async def is_banned(self, user_id):
-        doc = await self.banned_users.find_one({"user_id": user_id})
-        return doc is not None
+    async def add_premium(self, user_id: int, duration: int):
+        user = await self.get_user(user_id)
+        if user and user.get("premium_expires", None) is not None and datetime.fromtimestamp(user.get("premium_expires")) > datetime.now():
+            expire_time = datetime.fromtimestamp(user.get("premium_expires"))
+        else:
+            expire_time = datetime.now()
+        expire_time = expire_time + timedelta(seconds=duration)
+        await self.update_user(user_id, {"premium_expires": expire_time.timestamp()})
 
 
-    async def add_premium(self, user_id, duration):
-        await self.premium_users.update_one(
-            {"user_id": user_id},
-            {"$set": {"expires": duration}},
-            upsert=True
-        )
+    async def remove_premium(self, user_id: int):
+        await self.update_user(user_id, {"premium_expires": None})
+
+    async def check_premium(self, user_id: int) -> Literal['no', 'expired', 'yes']:
+        user = await self.get_user(user_id)
+        if not user or user.get('premium_expires', None) is None:
+            return 'no'
+
+        if datetime.fromtimestamp(user["premium_expires"]) < datetime.now():
+            await self.update_user(user_id, {"premium_expires": None})
+            return 'expired'
+        return 'yes'
 
 
-    async def get_premium(self, user_id):
-        doc = await self.premium_users.find_one({"user_id": user_id})
-        return doc.get("expires") if doc else None
+    async def get_premium(self, user_id: int):
+        user = await self.get_user(user_id)
+        return user.get("premium_expires") if user else None
 
-    async def remove_from_waiting(self, user_id):
+    async def remove_from_waiting(self, user_id: int):
         result = await self.waiting_queue.delete_one({"user_id": user_id})
         return result.deleted_count > 0
 

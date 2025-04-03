@@ -52,17 +52,43 @@ class AdminStates(StatesGroup):
     waiting_for_mail = State()
 
 
-async def find_partner(user_id: int, state: FSMContext):
-    waiting_user = await db.pop_waiting_user()
-    if waiting_user:
-        partner_id = waiting_user['user_id']
-        await db.create_active_pair(user_id, partner_id)
-        await state.set_state(PartnerStates.in_dialogue)
-        await connect_users(user_id, partner_id)
+async def cleanup_user(user_id: int):
+    pair = await db.get_pair(user_id)
+    if pair:
+        partner_id = await db.get_partner_id(user_id)
+        await disconnect_users(user_id, partner_id)
+
+    await db.remove_from_waiting(user_id)
+    await db.ban_user(user_id)
+    await db.update_user(user_id, {"warnings": MAX_WARNINGS})
+
+    state = dp.fsm.get_context(bot, user_id, user_id)
+    await state.clear()
+    logger.info(f"User {user_id} cleaned up")
+
+
+async def find_partner(user_data: dict):
+    user_id = user_data["user_id"]
+    user_lang = user_data.get("language", "en")
+
+    await db.remove_from_waiting(user_id)
+    existing_users = await db.get_waiting_users()
+
+    partner = None
+    for candidate in existing_users:
+        if candidate["user_id"] != user_id and candidate.get("lang") == user_lang:
+            partner = candidate
+            break
+
+    if partner:
+        await db.remove_from_waiting(user_id)
+        await db.remove_from_waiting(partner["user_id"])
+        await connect_users(user_id, partner["user_id"])
     else:
-        await db.add_to_waiting(user_id)
+        await db.add_to_waiting(user_id, user_lang)
+        await send_message(user_id, "partnerFinding")
+        state = dp.fsm.get_context(bot, user_id, user_id)
         await state.set_state(PartnerStates.searching)
-        await send_message(user_id, 'partnerFinding')
         await start_search_monitoring(user_id, state)
 
 
@@ -87,12 +113,12 @@ async def get_translation(user_id: int) -> dict:
     return translations.get(lang, translations['en'])
 
 
-async def send_message(user_id: int, key: str, **kwargs):
+async def send_message(user_id: int, key: str, reply_markup = None, **kwargs):
     try:
         translation = await get_translation(user_id)
         message = translation.get(key, translations['en'].get(key, key))
         if message:
-            await bot.send_message(user_id, message.format(**kwargs))
+            await bot.send_message(user_id, message.format(**kwargs), reply_markup=reply_markup)
     except (TelegramForbiddenError, TelegramNotFound):
         logger.info(f'User {user_id} blocked the bot or chat not found')
         await cleanup_user(user_id)
@@ -101,35 +127,23 @@ async def send_message(user_id: int, key: str, **kwargs):
 
 
 async def connect_users(user1_id: int, user2_id: int):
-    await db.create_active_pair(user1_id, user2_id)
-    user1_state = dp.fsm.get_context(bot, user1_id, user1_id)
-    await user1_state.set_state(PartnerStates.in_dialogue)
-    user2_state = dp.fsm.get_context(bot, user2_id, user2_id)
-    await user2_state.set_state(PartnerStates.in_dialogue)
-    await send_message(user1_id, 'partnerFind')
-    await send_message(user2_id, 'partnerFind')
+    pair_id = await db.create_pair(user1_id, user2_id)
+    for user_id in (user1_id, user2_id):
+        state = dp.fsm.get_context(bot, user_id, user_id)
+        await send_message(user_id, 'partnerFind')
+        await state.set_state(PartnerStates.in_dialogue)
 
 
 async def disconnect_users(user1_id: int, user2_id: int):
-    await db.remove_active_pair_bulk(user1_id, user2_id)
-    user1_state = dp.fsm.get_context(bot, user1_id, user1_id)
-    await user1_state.set_state(PartnerStates.in_dialogue)
-    user2_state = dp.fsm.get_context(bot, user2_id, user2_id)
-    await user2_state.set_state(PartnerStates.in_dialogue)
-    await send_message(user1_id, 'skipDialogue')
-    await send_message(user2_id, 'partnerSkipDialogue')
+    pair = await db.get_pair(user1_id)
+    if pair:
+        await db.end_pair(pair["pair_id"])
+        for user_id in (user1_id, user2_id):
+            state = dp.fsm.get_context(bot, user_id, user_id)
+            await state.clear()
+        await send_message(user1_id, 'skipDialogue')
+        await send_message(user2_id, 'partnerSkipDialogue')
 
-
-async def cleanup_user(user_id: int):
-    partner_id = await db.remove_active_pair(user_id)
-    if partner_id:
-        await send_message(partner_id, 'partnerSkipDialogue')
-
-    await db.remove_from_waiting(user_id)
-
-    global reporting
-    if user_id in reporting:
-        del reporting[user_id]
 
 
 @dp.message.middleware()
@@ -142,21 +156,19 @@ async def message_middleware(
         await send_message(message.from_user.id, 'banMessage')
         return None
     if not await db.is_existing_user(message.from_user.id):
-        await db.set_user_language(message.from_user.id, message.from_user.language_code or 'en')
+        await db.add_user(message.from_user.id, message.from_user.language_code or 'en')
+        if message.from_user.id in OWNER_IDS:
+            ten_years = 10 * 365 * 24 * 60 * 60
+            await db.add_premium(message.from_user.id, duration=ten_years)
+    premium = await db.update_user_activity(message.from_user.id)
+    if premium == 'expired':
+        await send_message(message.from_user.id, 'premiumExpired')
     return await handler(message, data)
 
 
 @dp.message(CommandStart())
 async def start_handler(message: Message):
-    user_id = message.from_user.id
-
-    if await db.is_banned(user_id):
-        await send_message(user_id, 'banMessage')
-        return
-    
-    lang = message.from_user.language_code or 'en'
-    await db.set_user_language(user_id, lang)
-    await send_message(user_id, 'hello')
+    await send_message(message.from_user.id, 'hello')
 
 
 @dp.message(Command('help'))
@@ -167,6 +179,7 @@ async def help_handler(message: Message):
 @dp.message(Command('next'))
 async def next_handler(message: Message, state: FSMContext):
     user_id = message.from_user.id
+    user_data = await db.get_user(user_id)
 
     if await db.is_banned(user_id):
         await send_message(user_id, 'banMessage')
@@ -183,7 +196,7 @@ async def next_handler(message: Message, state: FSMContext):
         await send_message(user_id, 'banMessage')
         return
 
-    await find_partner(user_id, state)
+    await find_partner(user_data)
 
 
 @dp.message(Command('stop'))
@@ -293,13 +306,10 @@ async def process_mailing_message(message: Message, state: FSMContext):
     )
 
 
-@dp.message(F.text)
-async def text_handler(message: Message, state: FSMContext):
+@dp.message(PartnerStates.in_dialogue)
+async def in_dialogue_handler(message: Message, state: FSMContext):
     user_id = message.from_user.id
     text = message.text
-
-    if await db.is_banned(user_id):
-        return
 
     global reporting
     if user_id in reporting:
@@ -321,9 +331,8 @@ async def text_handler(message: Message, state: FSMContext):
     if text.startswith('/'):
         return
 
-    active_pair = await db.active_pairs.find_one({"user_id": user_id})
-    if active_pair:
-        partner_id = await db.get_partner_id(user_id)
+    partner_id = await db.get_partner_id(user_id)
+    if partner_id:
         try:
             await bot.send_message(partner_id, text)
         except Exception as e:
@@ -331,6 +340,12 @@ async def text_handler(message: Message, state: FSMContext):
             await disconnect_users(user_id, partner_id)
     else:
         await send_message(user_id, 'sendNext')
+
+@dp.message(F.text)
+async def text_handler(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    text = message.text
+    await send_message(user_id, 'sendNext')
 
 
 async def main():
