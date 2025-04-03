@@ -1,7 +1,7 @@
 {
     "en": {
-        "hello": "👋 Hello there! I'm your friendly anonymous chat bot.\nLet's make new connections! Use /next to find a chat partner\n/stop - end conversation gracefully\n/help - get assistance",
-        "helpText": "ℹ️ Here's how I can help you:\n/start - Begin our journey\n/help - See this helpful guide\n/next - Find a wonderful chat partner\n/stop - Finish current chat politely\n/report - Report inappropriate behavior",
+        "hello": "👋 Hello there! I'm your friendly anonymous chat bot.\nLet's make new connections!\nUse /next to find a chat partner\n\n/stop - end conversation gracefully\n/help - get assistance",
+        "helpText": "ℹ️ Here's how I can help you:\n/start - Begin our journey\n/help - See this helpful guide\n/next - Find a wonderful chat partner\n/stop - Finish current chat politely\n/report - Report inappropriate behavior\n/stats - Bot statistics",
         "inDialogueWarning": "⚠️ You're already in a conversation. Please finish it first with /stop before finding someone new",
         "queue": "⏳ You're in the queue to meet someone nice... Please wait a moment",
         "partnerFind": "🎉 Wonderful! We found you a great chat partner. Say hello!",
@@ -29,8 +29,8 @@
         "premiumExpired": "😢 Your premium subscription has expired recently."
     },
     "ru": {
-        "hello": "👋 Привет! Я твой анонимный чат-бот.\nДавай находить новых друзей! Используй /next\n/stop - завершить диалог\n/help - помощь\n/report - пожаловаться на пользователя",
-        "helpText": "ℹ️ Вот что я умею:\n/start - Начать общение\n/help - Показать справку\n/next - Найти собеседника\n/stop - Закончить текущий чат\n/report - Пожаловаться на пользователя",
+        "hello": "👋 Привет! Я твой анонимный чат-бот.\nДавай находить новых друзей!\nИспользуй /next, чтобы найти собеседника\n\n/stop - завершить диалог\n/help - помощь\n/report - пожаловаться на пользователя",
+        "helpText": "ℹ️ Вот что я умею:\n/start - Начать общение\n/help - Показать справку\n/next - Найти собеседника\n/stop - Закончить текущий чат\n/report - Пожаловаться на пользователя\n/stats - Статистика бота",
         "inDialogueWarning": "⚠️ У тебя уже есть активный чат. Закончи его через /stop перед поиском нового",
         "queue": "⏳ Ты в очереди на поиск собеседника... Пожалуйста, подожди",
         "partnerFind": "🎉 Отлично! Мы нашли тебе собеседника. Начни общение!",
@@ -46,7 +46,8 @@
         "reportOptions": "Пожалуйста, укажи причину жалобы:",
         "reportReasons": ["Спам", "Неуместный контент", "Оскорбления", "Другое"],
         "noActiveChatReport": "❌ Жаловаться можно только во время активного чата",
-        "reportThankYou": "🙏 Спасибо за помощь в улучшении сервиса"
+        "reportThankYou": "🙏 Спасибо за помощь в улучшении сервиса",
+        "stats": "📊 Статистика\nПользователей: {user_count}\nПремиум пользователей: {premium_count}"
     },
     "es": {
         "hello": "👋 ¡Hola! Soy un bot de chat anónimo.\n¡Hagamos conexiones! Usa /next\n/stop - terminar conversación\n/help - ayuda",
