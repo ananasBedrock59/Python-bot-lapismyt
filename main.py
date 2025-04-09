@@ -12,7 +12,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.mongo import MongoStorage
-from aiogram.types import KeyboardButton
+from aiogram.types import KeyboardButton, ReplyKeyboardRemove
 from aiogram.types import Message
 from aiogram.utils.keyboard import ReplyKeyboardBuilder
 from dotenv import load_dotenv
@@ -145,8 +145,8 @@ async def disconnect_users(user1_id: int, user2_id: int):
         for user_id in (user1_id, user2_id):
             state = dp.fsm.get_context(bot, user_id, user_id)
             await state.clear()
-        await send_message(user1_id, 'skipDialogue')
-        await send_message(user2_id, 'partnerSkipDialogue')
+        await send_message(user1_id, 'skipDialogue', reply_markup=ReplyKeyboardRemove())
+        await send_message(user2_id, 'partnerSkipDialogue', reply_markup=ReplyKeyboardRemove())
 
 
 
@@ -326,10 +326,10 @@ async def in_dialogue_handler(message: Message, state: FSMContext):
         if warnings >= MAX_WARNINGS:
             await db.ban_user(partner_id)
             await cleanup_user(partner_id)
-            await send_message(partner_id, 'banMessage')
+            await send_message(partner_id, 'banMessage', reply_markup=ReplyKeyboardRemove())
 
         await disconnect_users(user_id, partner_id)
-        await send_message(user_id, 'reportSuccess')
+        await send_message(user_id, 'reportSuccess', reply_markup=ReplyKeyboardRemove())
         return
 
     if text is not None and text.startswith('/'):
@@ -343,13 +343,13 @@ async def in_dialogue_handler(message: Message, state: FSMContext):
             logger.error(f'Forward error: {e}')
             await disconnect_users(user_id, partner_id)
     else:
-        await send_message(user_id, 'sendNext')
+        await send_message(user_id, 'sendNext', reply_markup=ReplyKeyboardRemove())
 
 @dp.message(F.text)
 async def text_handler(message: Message, state: FSMContext):
     user_id = message.from_user.id
     text = message.text
-    await send_message(user_id, 'sendNext')
+    await send_message(user_id, 'sendNext', reply_markup=ReplyKeyboardRemove())
 
 
 async def main():
