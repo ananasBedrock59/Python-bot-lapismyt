@@ -28,6 +28,7 @@ DB_URI: str = os.getenv('DB_URI') or 'mongodb://localhost:27017'
 OWNER_IDS: list[int] = list(map(int, os.getenv('OWNER_IDS', '').split(','))) if os.getenv('OWNER_IDS') else []
 DB_NAME: str = os.getenv('DB_NAME') or 'anonbot'
 SEARCH_TIMEOUT: int = int(os.getenv('SEARCH_TIMEOUT') or 5)
+REPORT_LOGGING_CHAT: int = int(os.getenv('REPORT_LOGGING_CHAT'))
 
 
 with open('lang.json') as f:
@@ -328,13 +329,13 @@ async def in_dialogue_handler(message: Message, state: FSMContext):
         await send_message(user_id, 'reportSuccess')
         return
 
-    if text.startswith('/'):
+    if text is not None and text.startswith('/'):
         return
 
     partner_id = await db.get_partner_id(user_id)
     if partner_id:
         try:
-            await bot.send_message(partner_id, text)
+            await message.copy_to(partner_id)
         except Exception as e:
             logger.error(f'Forward error: {e}')
             await disconnect_users(user_id, partner_id)
