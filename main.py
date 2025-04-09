@@ -28,7 +28,7 @@ DB_URI: str = os.getenv('DB_URI') or 'mongodb://localhost:27017'
 OWNER_IDS: list[int] = list(map(int, os.getenv('OWNER_IDS', '').split(','))) if os.getenv('OWNER_IDS') else []
 DB_NAME: str = os.getenv('DB_NAME') or 'anonbot'
 SEARCH_TIMEOUT: int = int(os.getenv('SEARCH_TIMEOUT') or 5)
-REPORT_LOGGING_CHAT: int = int(os.getenv('REPORT_LOGGING_CHAT'))
+REPORT_LOGGING_CHAT: int = int(os.getenv('REPORT_LOGGING_CHAT')) if os.getenv('REPORT_LOGGING_CHAT') else None
 
 
 with open('lang.json') as f:
