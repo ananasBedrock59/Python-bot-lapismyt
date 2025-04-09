@@ -7,8 +7,8 @@ from pymongo import ASCENDING
 
 
 class Database:
-    def __init__(self, mongo_uri: str, db_name: str):
-        self.client = AsyncIOMotorClient(mongo_uri)
+    def __init__(self, mongo_uri: str, db_name: str, client: AsyncIOMotorClient | None = None):
+        self.client = AsyncIOMotorClient(mongo_uri) or client
         self.db: AsyncIOMotorDatabase = self.client[db_name]
 
         self.users: AsyncIOMotorCollection = self.db.users

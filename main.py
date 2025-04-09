@@ -11,11 +11,13 @@ from aiogram.exceptions import (
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.mongo import MongoStorage
 from aiogram.types import KeyboardButton
 from aiogram.types import Message
 from aiogram.utils.keyboard import ReplyKeyboardBuilder
 from dotenv import load_dotenv
 from loguru import logger
+from motor.motor_asyncio import AsyncIOMotorClient
 
 from database import Database
 
@@ -34,11 +36,12 @@ REPORT_LOGGING_CHAT: int = int(os.getenv('REPORT_LOGGING_CHAT')) if os.getenv('R
 with open('lang.json') as f:
     translations = json.load(f)
 
+motor_client = AsyncIOMotorClient(DB_URI)
 
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(storage=MongoStorage(client=motor_client, db_name=('anonbot_fsm' or os.getenv('FSM_DB_NAME'))))
 
-db = Database(DB_URI, DB_NAME)
+db = Database(DB_URI, DB_NAME, client=motor_client)
 
 reporting = {}
 
